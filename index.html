@@ -67,6 +67,8 @@
   .empty { color: var(--muted); padding: 20px; text-align: center; font-size: 13px; }
   #map { height: 480px; border-radius: 10px; background: var(--panel2); z-index: 1; }
   .dark-tiles { filter: brightness(0.65) saturate(0.5) contrast(1.05); }
+  .live-dot { display: none; width: 9px; height: 9px; border-radius: 50%; background: #3ddc84; margin-left: 8px; animation: pulse 2s infinite; vertical-align: 4px; }
+  @keyframes pulse { 0% { opacity: 1 } 50% { opacity: 0.35 } 100% { opacity: 1 } }
   .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: 12.5px; align-items: center; }
   .legend .sw { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
   .leaflet-popup-content { font-size: 13px; }
@@ -84,7 +86,7 @@
 
 <div class="wrap hidden" id="app">
   <header>
-    <h1>ON DESK <span>MISSION CONTROL</span></h1>
+    <h1>ON DESK <span>MISSION CONTROL</span><span class="live-dot" id="liveDot"></span></h1>
     <div class="updated" id="updatedAt"></div>
   </header>
 
@@ -135,7 +137,7 @@
     <div class="muted" id="leadCount" style="margin-top:10px;font-size:12.5px"></div>
   </div>
 
-  <footer>Built by <span>Scarlet</span> for Ryian · auto-refreshed nightly · data lives in the On Desk pipeline</footer>
+  <footer>Built by <span>Scarlet</span> for Ryian · LIVE data · straight from the On Desk pipeline</footer>
 </div>
 
 <script src="assets/leaflet.js" onerror="var s=document.createElement('script');s.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';document.head.appendChild(s);"></script>
@@ -163,8 +165,26 @@ document.getElementById('keyInput').addEventListener('keydown', e => { if (e.key
 document.getElementById('keyInput').focus();
 
 const D = JSON.parse(document.getElementById('dashData').textContent);
-const leads = D.leads || [];
-const appts = D.appointments || [];
+const FUNC_URL = "https://superagent-e1f4347f.base44.app/functions/getOnDeskDashboardData";
+let leads = D.leads || [];
+let appts = D.appointments || [];
+const coordCache = {};
+leads.forEach(l => { if (l.lat != null && l.lon != null) coordCache[l.name] = [l.lat, l.lon]; });
+
+function refreshLive() {
+  fetch(FUNC_URL).then(r => r.json()).then(fresh => {
+    if (!fresh || !fresh.ok) throw new Error('bad payload');
+    fresh.leads.forEach(l => { const c = coordCache[l.name]; if (c) { l.lat = c[0]; l.lon = c[1]; } });
+    leads = fresh.leads;
+    appts = fresh.appointments || [];
+    D.chat = fresh.chat || D.chat;
+    D.generated_at = fresh.generated_at;
+    render();
+    document.getElementById('liveDot').style.display = 'inline-block';
+  }).catch(() => {
+    document.getElementById('liveDot').style.display = 'none';
+  });
+}
 
 // auto-unlock within the same browser session
 try { if (sessionStorage.getItem('odk')) { document.getElementById('keyInput').value = sessionStorage.getItem('odk'); unlock(); } } catch(e) {}
@@ -176,7 +196,7 @@ function fmtDate(s) { if (!s) return ''; const d = new Date(s); return isNaN(d) 
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 function render() {
-  document.getElementById('updatedAt').textContent = 'Data through ' + new Date(D.generated_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+  document.getElementById('updatedAt').textContent = 'Updated ' + new Date(D.generated_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }) + ' ET · auto-refreshes every minute';
 
   const by = {};
   leads.forEach(l => { const s = l.status || 'Unknown'; by[s] = (by[s]||0)+1; });
@@ -227,15 +247,20 @@ function render() {
     '<div><div style="font-size:26px;font-weight:700;color:var(--good)">' + c.leads + '</div><div class="muted" style="font-size:12px">LEADS CAPTURED</div></div>' +
     '<div><div style="font-size:26px;font-weight:700;color:' + (c.pending ? 'var(--warn)' : 'var(--muted)') + '">' + c.pending + '</div><div class="muted" style="font-size:12px">PENDING</div></div></div>';
 
+  const sf = document.getElementById('statusFilter');
+  const nf = document.getElementById('nicheFilter');
   const statuses = [...new Set(leads.map(l => l.status).filter(Boolean))];
   const nichesList = [...new Set(leads.map(l => l.type).filter(Boolean))];
-  document.getElementById('statusFilter').innerHTML += statuses.map(s => '<option>' + esc(s) + '</option>').join('');
-  document.getElementById('nicheFilter').innerHTML += nichesList.map(s => '<option>' + esc(s) + '</option>').join('');
+  sf.innerHTML = '<option value="">All statuses</option>' + statuses.map(s => '<option>' + esc(s) + '</option>').join('');
+  nf.innerHTML = '<option value="">All niches</option>' + nichesList.map(s => '<option>' + esc(s) + '</option>').join('');
 
   renderLeads();
-  document.getElementById('search').addEventListener('input', renderLeads);
-  document.getElementById('statusFilter').addEventListener('change', renderLeads);
-  document.getElementById('nicheFilter').addEventListener('change', renderLeads);
+  if (!render.bound) {
+    document.getElementById('search').addEventListener('input', renderLeads);
+    sf.addEventListener('change', renderLeads);
+    nf.addEventListener('change', renderLeads);
+    render.bound = true;
+  }
 }
 
 const MAP_COLORS = { New:'#8b95a8', Emailed:'#4dd8ff', Retry:'#ffb454', Hot:'#ff4d6d', Contacted:'#3ddc84', Onboarding:'#3ddc84', Live:'#3ddc84', 'Followed Up':'#5b6478', Unknown:'#5b6478' };
@@ -291,6 +316,9 @@ function renderLeads() {
 }
 
 try { if (typeof L !== 'undefined') { initMap(); } else { document.getElementById('map').innerHTML = '<div class="empty">Map library failed to load — lead table still fully functional.</div>'; } } catch(e) { console.error(e); }
-render();</script>
+render();
+refreshLive();
+setInterval(refreshLive, 60000);
+</script>
 </body>
 </html>
