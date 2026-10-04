@@ -92,6 +92,12 @@
 
   <div class="kpis" id="kpis"></div>
 
+  <div class="card">
+    <h2>Money <span style="font-size:12px;color:var(--muted);font-weight:400">· Stripe, live</span></h2>
+    <div class="kpis" id="moneyKpis"></div>
+    <div id="moneyList" style="margin-top:8px"></div>
+  </div>
+
   <div class="grid2">
     <div class="card">
       <h2>Pipeline by Status</h2>
@@ -171,6 +177,25 @@ let appts = D.appointments || [];
 const coordCache = {};
 leads.forEach(l => { if (l.lat != null && l.lon != null) coordCache[l.name] = [l.lat, l.lon]; });
 
+let ST = null;
+function renderMoney() {
+  const st = ST || { balance:0, mrr:0, month_collected:0, total_collected:0, active_subs:0, customers:0, recent:[] };
+  const mk = [
+    { n: '$' + (st.mrr||0).toLocaleString(), l: 'MRR (active subs)' },
+    { n: '$' + (st.month_collected||0).toLocaleString(), l: 'Collected this month' },
+    { n: '$' + (st.total_collected||0).toLocaleString(), l: 'Total collected' },
+    { n: '$' + (st.balance||0).toLocaleString(), l: 'Stripe balance' },
+    { n: st.active_subs||0, l: 'Active subscriptions', c: 'good' },
+    { n: st.customers||0, l: 'Customers' },
+  ];
+  document.getElementById('moneyKpis').innerHTML = mk.map(k =>
+    '<div class="kpi ' + (k.c||'') + '"><div class="num">' + k.n + '</div><div class="lbl">' + k.l + '</div></div>').join('');
+  const list = document.getElementById('moneyList');
+  list.innerHTML = (st.recent && st.recent.length)
+    ? '<table><thead><tr><th>Payment</th><th>Amount</th><th>Date</th></tr></thead><tbody>' +
+      st.recent.map(p => '<tr><td>' + esc(p.desc) + '</td><td>$' + p.amount.toLocaleString() + '</td><td>' + fmtDate(new Date(p.created * 1000).toISOString()) + '</td></tr>').join('') + '</tbody></table>'
+    : '<div class="empty">No payments yet — the first close lights this panel up.</div>';
+}
 function refreshLive() {
   fetch(FUNC_URL).then(r => r.json()).then(fresh => {
     if (!fresh || !fresh.ok) throw new Error('bad payload');
@@ -254,6 +279,7 @@ function render() {
   sf.innerHTML = '<option value="">All statuses</option>' + statuses.map(s => '<option>' + esc(s) + '</option>').join('');
   nf.innerHTML = '<option value="">All niches</option>' + nichesList.map(s => '<option>' + esc(s) + '</option>').join('');
 
+  renderMoney();
   renderLeads();
   if (!render.bound) {
     document.getElementById('search').addEventListener('input', renderLeads);
@@ -317,6 +343,13 @@ function renderLeads() {
 
 try { if (typeof L !== 'undefined') { initMap(); } else { document.getElementById('map').innerHTML = '<div class="empty">Map library failed to load — lead table still fully functional.</div>'; } } catch(e) { console.error(e); }
 render();
+function refreshStripe() {
+  fetch("https://superagent-e1f4347f.base44.app/functions/getOnDeskStripeData").then(r => r.json()).then(s => {
+    if (s && s.ok) { ST = s; renderMoney(); }
+  }).catch(() => {});
+}
+refreshStripe();
+setInterval(refreshStripe, 60000);
 refreshLive();
 setInterval(refreshLive, 60000);
 </script>
